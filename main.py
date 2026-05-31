@@ -1,108 +1,91 @@
-import os
-import sys
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 import cv2
 import numpy as np
-import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 
-from src.preprocessing  import load_image, extract_patches, get_grid_shape
-from src.hog_features   import compute_hog_features, compute_hog_single, get_feature_dim
+from src.segmentation import CLUSTER_COLORS, CLUSTER_NAMES
 
-# ── Config ────────────────────────────────────────────────────────────────────
-IMAGE_PATH = "images/forest_path.jpg"
-PATCH_SIZE  = 16
-STRIDE      = 16
-OUTPUT_DIR  = "output"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# ── Main ──────────────────────────────────────────────────────────────────────
-def main():
-    print("=" * 50)
-    print("  Forest Path Segmentation — HOG Texture")
-    print("=" * 50)
+def overlay_segmentation(
+    img_bgr: np.ndarray,
+    color_map_rgb: np.ndarray,
+    alpha: float = 0.45,
+) -> np.ndarray:
+    """
+    Blend RGB color_map over original BGR image.
 
-    # ── Step 2: Load image + extract patches ──────────────────────────────
-    img_bgr, img_gray = load_image(IMAGE_PATH, max_width=600)
-    h, w = img_gray.shape
-    print(f"\n[Step 2] Image loaded  : {w} x {h} px")
+    Returns:
+        overlay : BGR image with segmentation blended in
+    """
+    color_map_bgr = cv2.cvtColor(color_map_rgb, cv2.COLOR_RGB2BGR)
+    cm_h, cm_w    = color_map_bgr.shape[:2]
+    overlay       = img_bgr.copy()
 
-    patches, positions = extract_patches(img_gray, PATCH_SIZE, STRIDE)
-    n_rows, n_cols     = get_grid_shape(img_gray, PATCH_SIZE, STRIDE)
-    print(f"[Step 2] Patch size    : {PATCH_SIZE} x {PATCH_SIZE} px")
-    print(f"[Step 2] Grid          : {n_rows} rows x {n_cols} cols")
-    print(f"[Step 2] Total patches : {len(patches)}")
+    overlay[:cm_h, :cm_w] = cv2.addWeighted(
+        img_bgr[:cm_h, :cm_w], 1 - alpha,
+        color_map_bgr,          alpha,
+        0,
+    )
+    return overlay
 
-    # Draw + save patch grid
-    img_preview = img_bgr.copy()
-    for (row, col) in positions:
-        cv2.rectangle(
-            img_preview,
-            (col, row),
-            (col + PATCH_SIZE, row + PATCH_SIZE),
-            color=(0, 200, 0),
-            thickness=1
+
+def save_segmentation_figure(
+    img_bgr: np.ndarray,
+    color_map: np.ndarray,
+    overlay: np.ndarray,
+    labels: np.ndarray,
+    n_clusters: int,
+    output_path: str,
+) -> None:
+    """Save 3-panel figure: Original | Segmentation Map | Overlay."""
+    fig, axes = plt.subplots(1, 3, figsize=(20, 8))
+    fig.patch.set_facecolor("#1e1e1e")
+
+    titles = [
+        "Original Image",
+        f"KMeans Segmentation  |  {n_clusters} clusters",
+        "Blended Overlay",
+    ]
+    images = [
+        cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB),
+        color_map,
+        cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB),
+    ]
+
+    for ax, img, title in zip(axes, images, titles):
+        ax.imshow(img)
+        ax.set_title(title, fontsize=12, fontweight="bold",
+                     color="white", pad=10)
+        ax.axis("off")
+        for spine in ax.spines.values():
+            spine.set_edgecolor("#555")
+
+    # Legend: show cluster + patch count
+    legend_patches = []
+    for i in range(n_clusters):
+        count      = int(np.sum(labels == i))
+        pct        = count / len(labels) * 100
+        color_norm = [c / 255 for c in CLUSTER_COLORS[i]]
+        legend_patches.append(
+            mpatches.Patch(
+                color=color_norm,
+                label=f"{CLUSTER_NAMES[i]}  —  {count} patches ({pct:.1f}%)",
+            )
         )
-    cv2.imwrite(os.path.join(OUTPUT_DIR, "step2_patch_grid.jpg"), img_preview)
-    print(f"[Step 2] Saved → output/step2_patch_grid.jpg")
 
-    # ── Step 3: HOG feature extraction ────────────────────────────────────
-    print(f"\n[Step 3] Computing HOG features for {len(patches)} patches...")
-
-    feature_matrix = compute_hog_features(patches)
-    feat_dim       = get_feature_dim(PATCH_SIZE)
-
-    print(f"[Step 3] Feature vector length : {feat_dim}")
-    print(f"[Step 3] Feature matrix shape  : {feature_matrix.shape}")
-    print(f"[Step 3]   → {feature_matrix.shape[0]} patches × {feature_matrix.shape[1]} features")
-
-    # ── Step 3 visualisation: 8 sample patches + HOG maps ─────────────────
-    sample_indices = np.linspace(0, len(patches) - 1, 8, dtype=int)
-
-    fig, axes = plt.subplots(2, 8, figsize=(18, 5))
-    fig.suptitle(
-        f"Step 3 — HOG Feature Extraction  |  patch {PATCH_SIZE}×{PATCH_SIZE} px  |  "
-        f"feature dim = {feat_dim}",
-        fontsize=13, fontweight="bold"
+    axes[1].legend(
+        handles=legend_patches,
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.08),
+        ncol=n_clusters,
+        fontsize=10,
+        framealpha=0.85,
+        facecolor="#2a2a2a",
+        labelcolor="white",
     )
 
-    for i, idx in enumerate(sample_indices):
-        patch = patches[idx]
-        fd, hog_img = compute_hog_single(patch)
-
-        # Top row: original patch
-        axes[0, i].imshow(patch, cmap="gray")
-        axes[0, i].set_title(f"patch #{idx}", fontsize=8)
-        axes[0, i].axis("off")
-
-        # Bottom row: HOG gradient map
-        axes[1, i].imshow(hog_img, cmap="magma")
-        axes[1, i].set_title(f"HOG", fontsize=8)
-        axes[1, i].axis("off")
-
-    axes[0, 0].set_ylabel("Original", fontsize=9)
-    axes[1, 0].set_ylabel("HOG map", fontsize=9)
-
     plt.tight_layout()
-    plt.savefig(os.path.join(OUTPUT_DIR, "step3_hog_samples.png"), dpi=150)
+    plt.savefig(output_path, dpi=150, bbox_inches="tight",
+                facecolor=fig.get_facecolor())
     plt.close()
-
-    # ── Step 3 visualisation: feature value distribution ──────────────────
-    fig2, ax = plt.subplots(figsize=(10, 4))
-    ax.hist(feature_matrix.flatten(), bins=60, color="#4A90D9", edgecolor="white", linewidth=0.4)
-    ax.set_title("Step 3 — HOG Feature Value Distribution (all patches)", fontsize=13)
-    ax.set_xlabel("HOG feature value")
-    ax.set_ylabel("Count")
-    plt.tight_layout()
-    plt.savefig(os.path.join(OUTPUT_DIR, "step3_feature_distribution.png"), dpi=150)
-    plt.close()
-
-    print(f"[Step 3] Saved → output/step3_hog_samples.png")
-    print(f"[Step 3] Saved → output/step3_feature_distribution.png")
-    print("\nStep 3 complete ✓  Ready for Step 4: KMeans clustering.")
-
-
-if __name__ == "__main__":
-    main()
+    print(f"[Step 4] Saved → {output_path}")
