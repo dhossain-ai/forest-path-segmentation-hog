@@ -1,82 +1,88 @@
+import cv2
 import numpy as np
-from sklearn.preprocessing import StandardScaler
-from sklearn.cluster import KMeans
-from scipy.ndimage import median_filter
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 
-# ── Cluster visual identity ───────────────────────────────────────────────────
-CLUSTER_COLORS = [
-    [139,  90,  43],   # cluster 0 — brown       (path)
-    [ 60, 179,  60],   # cluster 1 — green        (grass)
-    [ 47,  79, 159],   # cluster 2 — dark blue    (trees/canopy)
-]
-CLUSTER_NAMES = ["Path", "Grass", "Trees"]
+from src.segmentation import CLUSTER_COLORS, CLUSTER_NAMES
 
 
-def normalize_features(features: np.ndarray):
-    """StandardScaler — zero mean, unit variance per feature."""
-    scaler = StandardScaler()
-    return scaler.fit_transform(features), scaler
-
-
-def run_kmeans(features: np.ndarray, n_clusters: int = 3, random_state: int = 42):
-    """
-    Normalize + KMeans cluster HOG+color features.
-
-    Returns:
-        labels : (n_patches,) cluster ids
-        kmeans : fitted KMeans
-        scaler : fitted StandardScaler
-    """
-    features_scaled, scaler = normalize_features(features)
-    kmeans = KMeans(
-        n_clusters=n_clusters,
-        random_state=random_state,
-        n_init=15,
-        max_iter=500,
-    )
-    labels = kmeans.fit_predict(features_scaled)
-    return labels, kmeans, scaler
-
-
-def smooth_label_map(label_map: np.ndarray, size: int = 5) -> np.ndarray:
-    """
-    Apply median filter to 2D label map to remove noisy isolated patches.
-
-    Args:
-        label_map : (n_rows, n_cols) cluster labels
-        size      : filter kernel size — larger = smoother regions
-
-    Returns:
-        smoothed label map (same shape)
-    """
-    return median_filter(label_map, size=size).astype(np.int32)
-
-
-def build_label_map(labels: np.ndarray, n_rows: int, n_cols: int) -> np.ndarray:
-    """Reshape flat labels → 2D grid (n_rows × n_cols)."""
-    return labels[:n_rows * n_cols].reshape(n_rows, n_cols)
-
-
-def labels_to_color_map(
-    label_map: np.ndarray,
-    patch_size: int,
-    img_shape: tuple,
+def overlay_segmentation(
+    img_bgr: np.ndarray,
+    color_map_rgb: np.ndarray,
+    alpha: float = 0.45,
 ) -> np.ndarray:
-    """
-    Convert 2D label grid → full-resolution RGB segmentation image.
+    """Blend RGB color_map over original BGR image."""
+    color_map_bgr = cv2.cvtColor(color_map_rgb, cv2.COLOR_RGB2BGR)
+    cm_h, cm_w    = color_map_bgr.shape[:2]
+    overlay       = img_bgr.copy()
+    overlay[:cm_h, :cm_w] = cv2.addWeighted(
+        img_bgr[:cm_h, :cm_w], 1 - alpha,
+        color_map_bgr,          alpha,
+        0,
+    )
+    return overlay
 
-    Returns:
-        color_map : (H, W, 3) uint8 RGB image
-    """
-    H, W           = img_shape
-    n_rows, n_cols = label_map.shape
-    color_map      = np.zeros((H, W, 3), dtype=np.uint8)
 
-    for r in range(n_rows):
-        for c in range(n_cols):
-            label  = int(label_map[r, c])
-            r0, r1 = r * patch_size, min((r + 1) * patch_size, H)
-            c0, c1 = c * patch_size, min((c + 1) * patch_size, W)
-            color_map[r0:r1, c0:c1] = CLUSTER_COLORS[label % len(CLUSTER_COLORS)]
+def save_segmentation_figure(
+    img_bgr: np.ndarray,
+    color_map_raw: np.ndarray,
+    color_map_smooth: np.ndarray,
+    overlay: np.ndarray,
+    labels: np.ndarray,
+    labels_smooth: np.ndarray,
+    n_clusters: int,
+    output_path: str,
+) -> None:
+    """Save 4-panel figure: Original | Raw | Smoothed | Overlay."""
 
-    return color_map
+    fig, axes = plt.subplots(1, 4, figsize=(26, 8))
+    fig.patch.set_facecolor("#1e1e1e")
+
+    titles = [
+        "Original Image",
+        "KMeans (raw)",
+        "KMeans + Smoothing (5x5 median)",
+        "Final Overlay",
+    ]
+    images = [
+        cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB),
+        color_map_raw,
+        color_map_smooth,
+        cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB),
+    ]
+
+    for ax, img, title in zip(axes, images, titles):
+        ax.imshow(img)
+        ax.set_title(title, fontsize=11, fontweight="bold",
+                     color="white", pad=10)
+        ax.axis("off")
+
+    # Legend with smoothed label counts
+    legend_patches = []
+    for i in range(n_clusters):
+        count = int(np.sum(labels_smooth == i))
+        pct   = count / len(labels_smooth) * 100
+        color_norm = [c / 255 for c in CLUSTER_COLORS[i]]
+        legend_patches.append(
+            mpatches.Patch(
+                color=color_norm,
+                label=f"{CLUSTER_NAMES[i]}  —  {count} patches ({pct:.1f}%)",
+            )
+        )
+
+    axes[2].legend(
+        handles=legend_patches,
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.09),
+        ncol=n_clusters,
+        fontsize=10,
+        framealpha=0.85,
+        facecolor="#2a2a2a",
+        labelcolor="white",
+    )
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches="tight",
+                facecolor=fig.get_facecolor())
+    plt.close()
+    print(f"[Step 5] Saved → {output_path}")
