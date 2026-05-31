@@ -4,7 +4,7 @@ import numpy as np
 
 def load_image(image_path: str, max_width: int = 600):
     """
-    Load image from disk. Resize if wider than max_width (preserves aspect ratio).
+    Load image from disk. Resize if wider than max_width.
     Returns: img_bgr (color), img_gray (grayscale)
     """
     img_bgr = cv2.imread(image_path)
@@ -25,15 +25,7 @@ def load_image(image_path: str, max_width: int = 600):
 def extract_patches(image: np.ndarray, patch_size: int = 16, stride: int = 16):
     """
     Sliding-window patch extractor.
-
-    Args:
-        image:      Grayscale image (H x W)
-        patch_size: Side length of each square patch in pixels
-        stride:     Step between patches (= patch_size → no overlap)
-
-    Returns:
-        patches:   List of (patch_size x patch_size) arrays
-        positions: List of (row, col) top-left corner for each patch
+    Returns patches and their (row, col) top-left positions.
     """
     patches   = []
     positions = []

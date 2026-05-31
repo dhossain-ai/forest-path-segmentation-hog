@@ -1,13 +1,20 @@
 import os
+import sys
+
+# Ensure project root is on the Python path (fixes Windows import issues)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import cv2
+import matplotlib
+matplotlib.use("Agg")   # <-- no popup window needed, saves to file directly
 import matplotlib.pyplot as plt
 
 from src.preprocessing import load_image, extract_patches, get_grid_shape
 
 # ── Config ───────────────────────────────────────────────────────────────────
 IMAGE_PATH = "images/forest_path.jpg"
-PATCH_SIZE  = 16   # pixels per patch side
-STRIDE      = 16   # non-overlapping patches
+PATCH_SIZE  = 16
+STRIDE      = 16
 OUTPUT_DIR  = "output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -27,7 +34,7 @@ def main():
     n_rows, n_cols     = get_grid_shape(img_gray, PATCH_SIZE, STRIDE)
 
     print(f"[Step 2] Patch size    : {PATCH_SIZE} x {PATCH_SIZE} px")
-    print(f"[Step 2] Grid          : {n_rows} rows × {n_cols} cols")
+    print(f"[Step 2] Grid          : {n_rows} rows x {n_cols} cols")
     print(f"[Step 2] Total patches : {len(patches)}")
 
     # ── Draw patch grid overlay ─────────────────────────────────────────────
@@ -41,7 +48,7 @@ def main():
             thickness=1
         )
 
-    # ── Save + display ──────────────────────────────────────────────────────
+    # ── Save output ─────────────────────────────────────────────────────────
     cv2.imwrite(os.path.join(OUTPUT_DIR, "step2_patch_grid.jpg"), img_preview)
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 7))
@@ -52,16 +59,19 @@ def main():
 
     axes[1].imshow(cv2.cvtColor(img_preview, cv2.COLOR_BGR2RGB))
     axes[1].set_title(
-        f"Patch Grid  |  {PATCH_SIZE}×{PATCH_SIZE} px  |  {len(patches)} patches",
+        f"Patch Grid  |  {PATCH_SIZE}x{PATCH_SIZE} px  |  {len(patches)} patches",
         fontsize=13
     )
     axes[1].axis("off")
 
     plt.tight_layout()
     plt.savefig(os.path.join(OUTPUT_DIR, "step2_preview.png"), dpi=150)
-    plt.show()
+    plt.close()
+
     print(f"\n[Step 2] Saved → output/step2_preview.png")
+    print(f"[Step 2] Saved → output/step2_patch_grid.jpg")
     print("\nStep 2 complete ✓  Ready for Step 3: HOG feature extraction.")
+
 
 if __name__ == "__main__":
     main()
